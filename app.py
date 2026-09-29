@@ -105,6 +105,175 @@ section[data-testid="stSidebar"] *{color:#eef2ff!important}
 """,unsafe_allow_html=True)
 
 # -----------------------------
+# Auth helpers
+# -----------------------------
+def current_user():
+    return st.session_state.get("user")
+
+
+def sign_in(email: str, password: str):
+    # Use a fresh client for login because no session exists yet.
+    url = secret("SUPABASE_URL")
+    key = secret("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL or SUPABASE_KEY is missing in Streamlit Secrets.")
+
+    sb = create_client(url, key)
+    result = sb.auth.sign_in_with_password({"email": email, "password": password})
+    if result.user is None or result.session is None:
+        raise ValueError("Login succeeded without a Supabase session. Please try again.")
+
+    # Explicitly bind the JWT to PostgREST so RLS sees this request as
+    # the authenticated user, not as anon.
+    sb.postgrest.auth(result.session.access_token)
+
+    st.session_state.user = result.user
+    st.session_state.supabase_session = {
+        "access_token": result.session.access_token,
+        "refresh_token": result.session.refresh_token,
+    }
+
+
+def sign_up(email: str, password: str):
+    sb = get_supabase()
+    result = sb.auth.sign_up({"email": email, "password": password})
+    if result.user is None:
+        raise ValueError("Account could not be created.")
+    # Depending on Supabase email-confirmation settings, session may be None.
+    if result.session is not None:
+        st.session_state.user = result.user
+        st.session_state.supabase_session = {
+            "access_token": result.session.access_token,
+            "refresh_token": result.session.refresh_token,
+        }
+        return "Account created and logged in."
+    return "Account created. Check your email if email confirmation is enabled, then log in."
+
+
+def sign_out():
+    try:
+        get_supabase().auth.sign_out()
+    except Exception:
+        pass
+    st.session_state.user = None
+    st.session_state.supabase_session = None
+    st.session_state.generated_email = ""
+    st.session_state.last_action = ""
+    st.rerun()
+
+
+# -----------------------------
+# Groq generation
+# -----------------------------
+def build_prompt(action, tone, language, purpose, length, audience, extra, email_text):
+    if action == "Generate Email":
+        task = f"Create a new email from this request:\n{email_text}"
+    elif action == "Improve Email":
+        task = f"Improve this email while preserving its meaning and facts:\n{email_text}"
+    else:
+        task = f"Edit/rewrite this email according to the settings:\n{email_text}"
+
+    return f"""You are MailCraft AI, a professional email writing assistant.
+
+Action: {action}
+Tone: {tone}
+Language: {language}
+Purpose: {purpose}
+Length: {length}
+Audience: {audience}
+Additional instructions: {extra or 'None'}
+
+{task}
+
+Output rules:
+1. Start with a clear line: Subject: ...
+2. Then provide the complete email.
+3. Follow the selected language, tone, purpose, audience, and length.
+4. Preserve facts supplied by the user.
+5. Do not invent names, dates, companies, attachments, credentials, promises, or other facts.
+6. Do not explain your changes; output only the email.
+"""
+
+
+def generate_email(prompt: str) -> str:
+    client = get_groq()
+
+    # GPT-OSS 20B supports max_completion_tokens and include_reasoning=False.
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are MailCraft AI. Write polished, natural, concise professional emails.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.5,
+        max_completion_tokens=1400,
+        include_reasoning=False,
+        stream=False,
+    )
+
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        raise RuntimeError("Groq returned an empty response. Please try again.")
+    return content.strip()
+
+
+# -----------------------------
+# Database helpers
+# -----------------------------
+def save_email(body, action, tone, language, purpose, length):
+    user = current_user()
+    if not user:
+        raise ValueError("You must be logged in to save an email.")
+
+    sb = get_supabase()
+    sb.table("emails").insert(
+        {
+            "user_id": user.id,
+            "subject": extract_subject(body),
+            "body": body,
+            "action": action,
+            "tone": tone,
+            "language": language,
+            "purpose": purpose,
+            "length": length,
+        }
+    ).execute()
+
+
+def extract_subject(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip().lower().startswith("subject:"):
+            return line.split(":", 1)[1].strip()[:500]
+    return ""
+
+
+def load_history():
+    user = current_user()
+    if not user:
+        return []
+    sb = get_supabase()
+    result = (
+        sb.table("emails")
+        .select("id,subject,body,action,tone,language,purpose,length,created_at")
+        .eq("user_id", user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+def delete_email(email_id):
+    user = current_user()
+    if not user:
+        return
+    get_supabase().table("emails").delete().eq("id", email_id).eq("user_id", user.id).execute()
+
+
+
+# -----------------------------
 # Login / Signup
 # -----------------------------
 if not current_user():
