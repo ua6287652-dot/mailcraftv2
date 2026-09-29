@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import html
 import os
 import streamlit as st
 from groq import Groq
@@ -5,243 +8,408 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="MailCraft AI", page_icon="✉️", layout="wide")
 
-st.markdown("""
-<style>
-.stApp{background:#0b1020;color:#f5f7fb}
-section[data-testid="stSidebar"]{background:#11182b;border-right:1px solid #26304a}
-h1,h2,h3,p,label,span{color:#f5f7fb}
-.mc-hero{padding:24px 28px;border:1px solid #2b3655;border-radius:18px;background:#151d33;margin-bottom:20px}
-.mc-hero h1{margin:0 0 8px;font-size:42px}
-.mc-hero p{margin:0;color:#b8c2d9}
-div[data-testid="stTextArea"] textarea,div[data-testid="stTextInput"] input{color:#fff!important;background:#11182b!important;border:1px solid #33405f!important;caret-color:#fff!important}
-div[data-testid="stTextArea"] textarea::placeholder,div[data-testid="stTextInput"] input::placeholder{color:#8994ad!important}
-.stButton>button{border-radius:10px;border:1px solid #34415f;min-height:42px;font-weight:600}
-.mc-tip{padding:12px 14px;border-radius:10px;background:#18213a;border:1px solid #2d3958;margin-bottom:8px;color:#cdd6e8;font-size:14px}
-div[data-testid="stDownloadButton"] button{color:#fff!important;background:#1b2540!important;border:1px solid #3b496b!important}
-div[data-testid="stDownloadButton"] button:hover{color:#fff!important;background:#1b2540!important;border-color:#3b496b!important}
-</style>
-""", unsafe_allow_html=True)
-
-def secret(name):
+# -----------------------------
+# Secrets / clients
+# -----------------------------
+def secret(name: str) -> str:
     try:
-        value = st.secrets.get(name)
+        value = st.secrets.get(name, "")
         if value:
-            return value
+            return str(value).strip()
     except Exception:
         pass
-    return os.getenv(name)
+    return os.getenv(name, "").strip()
 
-def supabase_client():
+
+def get_supabase() -> Client:
     url = secret("SUPABASE_URL")
     key = secret("SUPABASE_KEY")
     if not url or not key:
-        return None
+        raise ValueError("SUPABASE_URL or SUPABASE_KEY is missing in Streamlit Secrets.")
     return create_client(url, key)
 
-def groq_key():
-    return secret("GROQ_API_KEY")
 
-def get_prompt(action, text, tone, language, purpose, length, audience, instructions):
-    task = {
-        "Generate Email":"Write a new email from the user's brief.",
-        "Improve Email":"Improve the existing email while preserving its meaning.",
-        "Edit Email":"Edit the email according to the additional instructions."
-    }[action]
-    return f"""You are MailCraft AI, an expert email-writing assistant.
+def get_groq() -> Groq:
+    key = secret("GROQ_API_KEY")
+    if not key:
+        raise ValueError("GROQ_API_KEY is missing in Streamlit Secrets.")
+    return Groq(api_key=key)
 
-TASK: {task}
 
-INPUT:
-{text}
+# -----------------------------
+# Session state
+# -----------------------------
+def init_state():
+    defaults = {
+        "user": None,
+        "generated_email": "",
+        "last_action": "",
+        "auth_mode": "Login",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-SETTINGS:
+
+init_state()
+
+
+# -----------------------------
+# CSS
+# -----------------------------
+st.markdown(
+    """
+<style>
+.stApp { background: #f7f8fc; }
+.block-container { max-width: 1200px; padding-top: 2rem; }
+.hero { padding: 10px 0 22px; }
+.hero h1 { font-size: 42px; margin: 0; color: #172033; }
+.hero p { color: #667085; font-size: 16px; margin-top: 7px; }
+.card { background: white; border: 1px solid #e4e7ec; border-radius: 16px; padding: 22px; }
+.section-title { font-size: 21px; font-weight: 700; color: #172033; margin-bottom: 5px; }
+.section-subtitle { color: #667085; font-size: 13px; margin-bottom: 18px; }
+.small-muted { color: #667085; font-size: 13px; }
+.history-item { background: white; border: 1px solid #e4e7ec; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# -----------------------------
+# Auth helpers
+# -----------------------------
+def current_user():
+    return st.session_state.get("user")
+
+
+def sign_in(email: str, password: str):
+    sb = get_supabase()
+    result = sb.auth.sign_in_with_password({"email": email, "password": password})
+    st.session_state.user = result.user
+
+
+def sign_up(email: str, password: str):
+    sb = get_supabase()
+    result = sb.auth.sign_up({"email": email, "password": password})
+    if result.user is None:
+        raise ValueError("Account could not be created.")
+    # Depending on Supabase email-confirmation settings, session may be None.
+    if result.session is not None:
+        st.session_state.user = result.user
+        return "Account created and logged in."
+    return "Account created. Check your email if email confirmation is enabled, then log in."
+
+
+def sign_out():
+    try:
+        get_supabase().auth.sign_out()
+    except Exception:
+        pass
+    st.session_state.user = None
+    st.session_state.generated_email = ""
+    st.session_state.last_action = ""
+    st.rerun()
+
+
+# -----------------------------
+# Groq generation
+# -----------------------------
+def build_prompt(action, tone, language, purpose, length, audience, extra, email_text):
+    if action == "Generate Email":
+        task = f"Create a new email from this request:\n{email_text}"
+    elif action == "Improve Email":
+        task = f"Improve this email while preserving its meaning and facts:\n{email_text}"
+    else:
+        task = f"Edit/rewrite this email according to the settings:\n{email_text}"
+
+    return f"""You are MailCraft AI, a professional email writing assistant.
+
+Action: {action}
 Tone: {tone}
 Language: {language}
 Purpose: {purpose}
 Length: {length}
 Audience: {audience}
-Additional instructions: {instructions or "None"}
+Additional instructions: {extra or 'None'}
 
-Return ONLY the finished email.
-Start with a Subject: line.
-Do not add explanations or markdown fences.
-Do not invent facts, names, dates, attachments or commitments."""
+{task}
 
-def generate(action, text, tone, language, purpose, length, audience, instructions):
-    key = groq_key()
-    if not key:
-        raise RuntimeError("GROQ_API_KEY is missing. Add it in Streamlit Cloud → Settings → Secrets.")
-    client = Groq(api_key=key)
-    result = client.chat.completions.create(
+Output rules:
+1. Start with a clear line: Subject: ...
+2. Then provide the complete email.
+3. Follow the selected language, tone, purpose, audience, and length.
+4. Preserve facts supplied by the user.
+5. Do not invent names, dates, companies, attachments, credentials, promises, or other facts.
+6. Do not explain your changes; output only the email.
+"""
+
+
+def generate_email(prompt: str) -> str:
+    client = get_groq()
+
+    # GPT-OSS 20B supports max_completion_tokens and include_reasoning=False.
+    response = client.chat.completions.create(
         model="openai/gpt-oss-20b",
         messages=[
-            {"role":"system","content":"You write accurate, polished emails."},
-            {"role":"user","content":get_prompt(action,text,tone,language,purpose,length,audience,instructions)}
+            {
+                "role": "system",
+                "content": "You are MailCraft AI. Write polished, natural, concise professional emails.",
+            },
+            {"role": "user", "content": prompt},
         ],
         temperature=0.5,
-        max_tokens=1800
+        max_completion_tokens=1400,
+        include_reasoning=False,
+        stream=False,
     )
-    return result.choices[0].message.content.strip()
 
-def current_user():
-    return st.session_state.get("user")
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        raise RuntimeError("Groq returned an empty response. Please try again.")
+    return content.strip()
 
-def save_email(sb, user_id, content, action, tone, language, purpose, length):
-    first, _, body = content.partition("\n")
-    subject = first.replace("Subject:", "").strip()
-    sb.table("emails").insert({
-        "user_id": user_id,
-        "subject": subject or "MailCraft Email",
-        "body": body.strip() if body.strip() else content,
-        "action": action,
-        "tone": tone,
-        "language": language,
-        "purpose": purpose,
-        "length": length,
-    }).execute()
 
-def login_ui(sb):
-    st.sidebar.markdown("## 🔐 Account")
-    mode = st.sidebar.radio("Choose", ["Login", "Sign Up"], horizontal=True)
-    email = st.sidebar.text_input("Email", key="auth_email")
-    password = st.sidebar.text_input("Password", type="password", key="auth_password")
+# -----------------------------
+# Database helpers
+# -----------------------------
+def save_email(body, action, tone, language, purpose, length):
+    user = current_user()
+    if not user:
+        raise ValueError("You must be logged in to save an email.")
 
-    if mode == "Sign Up":
-        if st.sidebar.button("Create Account", use_container_width=True):
-            try:
-                result = sb.auth.sign_up({"email": email, "password": password})
-                if result.user:
-                    st.sidebar.success("Account created. Check your email if confirmation is enabled.")
-            except Exception as e:
-                st.sidebar.error(str(e))
-    else:
-        if st.sidebar.button("Login", use_container_width=True):
-            try:
-                result = sb.auth.sign_in_with_password({"email": email, "password": password})
-                st.session_state.user = result.user
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(str(e))
+    sb = get_supabase()
+    sb.table("emails").insert(
+        {
+            "user_id": user.id,
+            "subject": extract_subject(body),
+            "body": body,
+            "action": action,
+            "tone": tone,
+            "language": language,
+            "purpose": purpose,
+            "length": length,
+        }
+    ).execute()
 
-def history_ui(sb):
+
+def extract_subject(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip().lower().startswith("subject:"):
+            return line.split(":", 1)[1].strip()[:500]
+    return ""
+
+
+def load_history():
+    user = current_user()
+    if not user:
+        return []
+    sb = get_supabase()
+    result = (
+        sb.table("emails")
+        .select("id,subject,body,action,tone,language,purpose,length,created_at")
+        .eq("user_id", user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+def delete_email(email_id):
     user = current_user()
     if not user:
         return
-    st.subheader("📚 My Email History")
-    try:
-        rows = sb.table("emails").select("*").eq("user_id", user.id).order("created_at", desc=True).execute().data
-        if not rows:
-            st.info("No saved emails yet.")
-            return
-        for row in rows:
-            with st.expander(f"{row.get('subject') or 'Untitled'} • {row.get('created_at','')[:10]}"):
-                st.text_area("Saved email", row.get("body",""), height=180, key=f"hist_{row['id']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.download_button(
-                        "⬇️ Download",
-                        data=row.get("body",""),
-                        file_name="mailcraft_saved_email.txt",
-                        mime="text/plain",
-                        key=f"download_{row['id']}",
-                        use_container_width=True
-                    )
-                with col2:
-                    if st.button("🗑️ Delete", key=f"delete_{row['id']}", use_container_width=True):
-                        sb.table("emails").delete().eq("id", row["id"]).eq("user_id", user.id).execute()
+    get_supabase().table("emails").delete().eq("id", email_id).eq("user_id", user.id).execute()
+
+
+# -----------------------------
+# Login / Signup
+# -----------------------------
+if not current_user():
+    st.markdown('<div class="hero"><h1>✉️ MailCraft AI</h1><p>Write better emails, your way.</p></div>', unsafe_allow_html=True)
+
+    tab_login, tab_signup = st.tabs(["Login", "Sign up"])
+
+    with tab_login:
+        st.markdown("### Welcome back")
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Login", type="primary", use_container_width=True):
+            if not email.strip() or not password:
+                st.warning("Please enter email and password.")
+            else:
+                try:
+                    sign_in(email.strip(), password)
+                    st.success("Login successful.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Login failed: {e}")
+
+    with tab_signup:
+        st.markdown("### Create your account")
+        email2 = st.text_input("Email", key="signup_email")
+        password2 = st.text_input("Password", type="password", key="signup_password")
+        password3 = st.text_input("Confirm password", type="password", key="signup_confirm")
+        if st.button("Create account", type="primary", use_container_width=True):
+            if not email2.strip() or not password2:
+                st.warning("Please enter email and password.")
+            elif password2 != password3:
+                st.error("Passwords do not match.")
+            else:
+                try:
+                    msg = sign_up(email2.strip(), password2)
+                    st.success(msg)
+                    if current_user():
                         st.rerun()
-    except Exception as e:
-        st.error(f"Could not load history: {e}")
+                except Exception as e:
+                    st.error(f"Signup failed: {e}")
 
-if "result" not in st.session_state:
-    st.session_state.result = ""
-if "user" not in st.session_state:
-    st.session_state.user = None
+    st.stop()
 
-sb = supabase_client()
+
+# -----------------------------
+# Main app
+# -----------------------------
+user = current_user()
 
 with st.sidebar:
-    st.markdown("## ✉️ MailCraft AI")
-    st.caption("AI Email Writer & Editor")
-    st.divider()
+    st.markdown("## ✦ MailCraft AI")
+    st.caption(user.email if getattr(user, "email", None) else "Logged in")
+    if st.button("Logout", use_container_width=True):
+        sign_out()
 
-    if sb:
-        if current_user():
-            st.success(f"Logged in as {current_user().email}")
-            if st.button("Logout", use_container_width=True):
-                try:
-                    sb.auth.sign_out()
-                except Exception:
-                    pass
-                st.session_state.user = None
-                st.rerun()
-        else:
-            login_ui(sb)
-    else:
-        st.warning("Supabase is not configured. Writer mode is available, but login/history are disabled.")
+    st.markdown("---")
+    action = st.radio(
+        "Choose an action",
+        ["Generate Email", "Improve Email", "Edit Email"],
+    )
 
-    st.divider()
-    tone=st.selectbox("Tone",["Professional","Formal","Friendly","Polite","Casual","Persuasive","Confident","Apologetic","Warm"])
-    language=st.selectbox("Language",["English","Urdu","Roman Urdu","Arabic","French","Spanish","German","Other"])
-    purpose=st.selectbox("Purpose",["Job Application","Internship Application","Leave Request","Meeting Request","Follow-up","Thank You","Complaint","Business Inquiry","Customer Support","Cold Outreach","Apology","General","Other"])
-    length=st.selectbox("Length",["Very Short","Short","Medium","Detailed","Very Detailed"],index=2)
-    audience=st.selectbox("Audience",["Manager / Supervisor","HR / Recruiter","Client / Customer","Teacher / Professor","Colleague","Friend / Personal","Business Partner","General"])
-    instructions=st.text_input("Additional instructions",placeholder="e.g. sound confident but not pushy")
+st.markdown(
+    '<div class="hero"><h1>Write emails your way.</h1><p>Generate, improve, edit, save and revisit your emails.</p></div>',
+    unsafe_allow_html=True,
+)
 
-    st.divider()
-    st.markdown("### 💡 Quick Tips")
-    st.markdown('<div class="mc-tip">Be specific about the goal.</div>',unsafe_allow_html=True)
-    st.markdown('<div class="mc-tip">Mention important context.</div>',unsafe_allow_html=True)
-    st.markdown('<div class="mc-tip">Use Improve Email for an existing draft.</div>',unsafe_allow_html=True)
+left, right = st.columns([1, 1], gap="large")
 
-st.markdown('<div class="mc-hero"><h1>✉️ MailCraft AI</h1><p>Generate, improve, edit and save professional emails with AI.</p></div>',unsafe_allow_html=True)
-
-left,right=st.columns(2,gap="large")
 with left:
-    st.subheader("📝 Your Email")
-    action=st.radio("Choose an action",["Generate Email","Improve Email","Edit Email"],horizontal=True)
-    placeholders={
-        "Generate Email":"Example: Write an email to HR asking about my internship application status.",
-        "Improve Email":"Paste your existing email here.",
-        "Edit Email":"Paste your email and describe what you want changed."
-    }
-    source=st.text_area("Input",height=330,placeholder=placeholders[action],label_visibility="collapsed")
-    if st.button("✨ Generate / Process Email",use_container_width=True):
-        if not source.strip():
-            st.warning("Please enter an email request or draft.")
-        else:
-            with st.spinner("MailCraft AI is writing..."):
-                try:
-                    st.session_state.result=generate(action,source,tone,language,purpose,length,audience,instructions)
-                except Exception as e:
-                    st.error(str(e))
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title">{html.escape(action)}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-subtitle">Customize your email and let AI do the writing.</div>', unsafe_allow_html=True)
+
+    tone = st.selectbox(
+        "Tone",
+        ["Professional", "Formal", "Friendly", "Polite", "Casual", "Persuasive", "Confident", "Apologetic", "Warm"],
+    )
+    language = st.selectbox(
+        "Language",
+        ["English", "Urdu", "Roman Urdu", "Arabic", "French", "Spanish", "German", "Other"],
+    )
+    purpose = st.selectbox(
+        "Purpose",
+        ["Job Application", "Internship Application", "Leave Request", "Meeting Request", "Follow-up", "Thank You", "Complaint", "Business Inquiry", "Customer Support", "Cold Outreach", "Apology", "General", "Other"],
+    )
+    length = st.selectbox("Length", ["Very Short", "Short", "Medium", "Detailed", "Very Detailed"], index=2)
+    audience = st.selectbox(
+        "Audience",
+        ["Manager / Supervisor", "HR / Recruiter", "Client / Customer", "Teacher / Professor", "Colleague", "Friend / Personal", "Business Partner", "General"],
+    )
+
+    input_label = "What do you want to say?" if action == "Generate Email" else "Email to work on"
+    email_text = st.text_area(
+        input_label,
+        height=180,
+        placeholder="Example: I want to apply for a Python internship. Mention my AI and Streamlit projects and ask about the application process.",
+    )
+    extra = st.text_area(
+        "Additional instructions (optional)",
+        height=90,
+        placeholder="Example: Keep it concise and confident.",
+    )
+
+    generate_button = st.button("✨ Generate / Process Email", type="primary", use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with right:
-    st.subheader("🤖 AI Result")
-    st.caption("Edit the result before saving or downloading.")
-    st.session_state.result=st.text_area("AI Result",value=st.session_state.result,height=330,key="result_editor",label_visibility="collapsed",placeholder="Your generated email will appear here...")
-    if st.session_state.result.strip():
-        c1,c2=st.columns(2)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">AI Result</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-subtitle">Edit the result before saving or downloading.</div>', unsafe_allow_html=True)
+
+    if generate_button:
+        if not email_text.strip():
+            st.warning("Please enter what you want the email to say.")
+        else:
+            prompt = build_prompt(action, tone, language, purpose, length, audience, extra.strip(), email_text.strip())
+            with st.spinner("MailCraft is generating your email..."):
+                try:
+                    st.session_state.generated_email = generate_email(prompt)
+                    st.session_state.last_action = action
+                    st.success("Email generated successfully.")
+                except Exception as e:
+                    # Show the actual API error so deployment issues are diagnosable.
+                    st.error(f"Email generation failed: {e}")
+
+    result = st.session_state.generated_email
+
+    if result:
+        edited = st.text_area(
+            "Final email",
+            value=result,
+            height=360,
+            key="editable_result",
+        )
+        st.session_state.generated_email = edited
+
+        c1, c2 = st.columns(2)
         with c1:
-            st.download_button("⬇️ Download .txt",st.session_state.result,"mailcraft_email.txt","text/plain",use_container_width=True)
+            if st.button("💾 Save to History", use_container_width=True):
+                try:
+                    save_email(edited, st.session_state.last_action, tone, language, purpose, length)
+                    st.success("Email saved to your history.")
+                except Exception as e:
+                    st.error(f"Could not save email: {e}")
         with c2:
-            if sb and current_user():
-                if st.button("💾 Save Email",use_container_width=True):
+            st.download_button(
+                "📥 Download .txt",
+                data=edited,
+                file_name="mailcraft_email.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+    else:
+        st.info("Your generated email will appear here.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# -----------------------------
+# History
+# -----------------------------
+st.markdown("## My Email History")
+try:
+    history = load_history()
+    if not history:
+        st.info("No saved emails yet. Generate an email and click Save to History.")
+    else:
+        for item in history:
+            subject = item.get("subject") or "Untitled email"
+            created = item.get("created_at", "")
+            with st.expander(f"{subject} — {created[:19].replace('T', ' ')}"):
+                st.text_area(
+                    "Email",
+                    value=item.get("body", ""),
+                    height=220,
+                    key=f"history_body_{item['id']}",
+                )
+                st.caption(
+                    f"Action: {item.get('action','')} • Tone: {item.get('tone','')} • "
+                    f"Language: {item.get('language','')} • Purpose: {item.get('purpose','')}"
+                )
+                if st.button("🗑️ Delete", key=f"delete_{item['id']}"):
                     try:
-                        save_email(sb,current_user().id,st.session_state.result,action,tone,language,purpose,length)
-                        st.success("Email saved to your history.")
+                        delete_email(item["id"])
+                        st.success("Deleted.")
+                        st.rerun()
                     except Exception as e:
-                        st.error(f"Could not save email: {e}")
-            else:
-                st.button("💾 Save Email",disabled=True,use_container_width=True)
-
-        if st.button("🗑️ Clear Result",use_container_width=True):
-            st.session_state.result=""
-            st.rerun()
-
-if sb and current_user():
-    st.divider()
-    history_ui(sb)
-
-st.divider()
-st.caption("MailCraft AI V3 • Supabase persistence + Groq AI")
+                        st.error(f"Could not delete: {e}")
+except Exception as e:
+    st.error(f"Could not load email history: {e}")
