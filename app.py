@@ -26,7 +26,20 @@ def get_supabase() -> Client:
     key = secret("SUPABASE_KEY")
     if not url or not key:
         raise ValueError("SUPABASE_URL or SUPABASE_KEY is missing in Streamlit Secrets.")
-    return create_client(url, key)
+
+    sb = create_client(url, key)
+
+    # IMPORTANT: Streamlit reruns the script and creates a new Supabase client.
+    # Re-attach the logged-in user's access token so RLS sees the request as
+    # authenticated instead of anonymous.
+    session = st.session_state.get("supabase_session")
+    if session:
+        access_token = session.get("access_token")
+        refresh_token = session.get("refresh_token")
+        if access_token and refresh_token:
+            sb.auth.set_session(access_token, refresh_token)
+
+    return sb
 
 
 def get_groq() -> Groq:
@@ -42,6 +55,7 @@ def get_groq() -> Groq:
 def init_state():
     defaults = {
         "user": None,
+        "supabase_session": None,
         "generated_email": "",
         "last_action": "",
         "auth_mode": "Login",
@@ -84,9 +98,22 @@ def current_user():
 
 
 def sign_in(email: str, password: str):
-    sb = get_supabase()
+    # Use a fresh client for login because no session exists yet.
+    url = secret("SUPABASE_URL")
+    key = secret("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL or SUPABASE_KEY is missing in Streamlit Secrets.")
+
+    sb = create_client(url, key)
     result = sb.auth.sign_in_with_password({"email": email, "password": password})
+    if result.user is None or result.session is None:
+        raise ValueError("Login succeeded without a Supabase session. Please try again.")
+
     st.session_state.user = result.user
+    st.session_state.supabase_session = {
+        "access_token": result.session.access_token,
+        "refresh_token": result.session.refresh_token,
+    }
 
 
 def sign_up(email: str, password: str):
@@ -97,6 +124,10 @@ def sign_up(email: str, password: str):
     # Depending on Supabase email-confirmation settings, session may be None.
     if result.session is not None:
         st.session_state.user = result.user
+        st.session_state.supabase_session = {
+            "access_token": result.session.access_token,
+            "refresh_token": result.session.refresh_token,
+        }
         return "Account created and logged in."
     return "Account created. Check your email if email confirmation is enabled, then log in."
 
@@ -107,6 +138,7 @@ def sign_out():
     except Exception:
         pass
     st.session_state.user = None
+    st.session_state.supabase_session = None
     st.session_state.generated_email = ""
     st.session_state.last_action = ""
     st.rerun()
