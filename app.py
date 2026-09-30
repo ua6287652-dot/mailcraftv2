@@ -98,9 +98,13 @@ section[data-testid="stSidebar"] *{color:#eef2ff!important}
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:18px}.eyebrow{color:#6d3df5;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.hero-title{font-size:40px;line-height:1.05;font-weight:800;color:var(--ink);letter-spacing:-1.5px;margin:3px 0 8px}.hero-sub{color:var(--muted);font-size:15px;margin:0}.user-pill{background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 14px;color:#344054;font-size:13px;box-shadow:0 6px 20px rgba(31,41,70,.05)}
 .feature{background:#fff;border:1px solid var(--line);border-radius:18px;padding:17px 18px;height:100%;box-shadow:0 7px 25px rgba(31,41,70,.045)}.feature-icon{width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:linear-gradient(135deg,#ece7ff,#e9f1ff);font-size:20px;margin-bottom:10px}.feature-title{color:#202b44;font-weight:750;font-size:14px}.feature-text{color:#7a849a;font-size:12px;line-height:1.45;margin-top:4px}
 .app-card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 12px 35px rgba(31,41,70,.055)}.card-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}.card-icon{width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#5d73ff,#8b5cf6);color:white;font-size:21px}.card-title{color:#172033;font-size:21px;font-weight:800}.card-sub{color:#7a849a;font-size:12px;margin-top:3px}.result-empty{min-height:355px;border:1px dashed #d9dce8;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:linear-gradient(180deg,#fff,#fafbff)}.empty-icon{font-size:50px;margin-bottom:12px}.empty-title{color:#25304a;font-weight:750;font-size:16px}.empty-text{color:#8992a5;font-size:12px;max-width:280px;margin-top:5px}
-.auth-wrap{max-width:1050px;margin:45px auto}.auth-brand{background:linear-gradient(160deg,#0d1b3f,#1a2d67);border-radius:24px 0 0 24px;min-height:590px;padding:45px 38px;color:white}.auth-brand h1{font-size:34px;line-height:1.08;margin:15px 0 12px}.auth-brand p{color:#c5cff1;line-height:1.6;font-size:14px}.auth-point{margin:20px 0;color:#e7ebff;font-size:13px}.auth-form{background:#fff;border:1px solid var(--line);border-radius:0 24px 24px 0;min-height:590px;padding:40px 42px;box-shadow:0 20px 60px rgba(31,41,70,.08)}
+.auth-wrap{max-width:1050px;margin:45px auto}.auth-brand{background:linear-gradient(160deg,#0d1b3f,#1a2d67);border-radius:24px 0 0 24px;min-height:590px;padding:45px 38px;color:white}.auth-brand h1{font-size:34px;line-height:1.08;margin:15px 0 12px}.auth-brand p{color:#c5cff1;line-height:1.6;font-size:14px}.auth-point{margin:20px 0;color:#e7ebff;font-size:13px}.auth-form{background:#fff;border:1px solid var(--line);border-radius:24px;min-height:590px;padding:40px 42px;box-shadow:0 20px 60px rgba(31,41,70,.08)}
+/* The auth form is a real Streamlit bordered container so widgets stay inside it. */
+[data-testid="stVerticalBlockBorderWrapper"]{border-radius:24px!important;border:1px solid #e8eaf2!important;background:#fff!important;box-shadow:0 20px 60px rgba(31,41,70,.08)!important}
+[data-testid="stVerticalBlockBorderWrapper"] > div{padding:30px 34px!important}
 .stTextInput input,.stTextArea textarea,.stSelectbox div[data-baseweb="select"]>div{border-radius:11px!important;border-color:#dfe3ee!important;background:#fff!important;color:#172033!important}.stButton>button,.stDownloadButton>button{border-radius:11px!important;font-weight:700!important;min-height:43px}.stButton>button[kind="primary"]{background:linear-gradient(90deg,#6939f5,#4d8df7)!important;border:0!important;color:white!important}.stDownloadButton>button{border:1px solid #dfe3ee!important;background:white!important;color:#344054!important}label,.stMarkdown p{color:#344054}.history-card{background:#fff;border:1px solid var(--line);border-radius:15px;padding:15px 17px;margin-bottom:10px;box-shadow:0 5px 18px rgba(31,41,70,.035)}.history-title{color:#202b44;font-weight:750;font-size:14px}.history-meta{color:#8992a5;font-size:11px;margin-top:5px}div[data-testid="stAlert"]{border-radius:12px}
-@media(max-width:900px){.hero-title{font-size:31px}.block-container{padding:1rem}.auth-brand,.auth-form{border-radius:20px;min-height:auto}.auth-brand{margin-bottom:12px}}
+@media(max-width:900px){.hero-title{font-size:31px}.block-container{padding:1rem}.auth-brand{border-radius:20px;min-height:auto}
+[data-testid="stVerticalBlockBorderWrapper"]{border-radius:20px!important}.auth-brand{margin-bottom:12px}}
 </style>
 """,unsafe_allow_html=True)
 
@@ -282,33 +286,35 @@ if not current_user():
     with a1:
         st.markdown('''<div class="auth-brand"><div style="font-size:28px">✉️ <b>MailCraft AI</b> ✨</div><h1>Turn your ideas into professional emails.</h1><p>Write, improve, edit and save polished emails with AI — in seconds.</p><div class="auth-point">✓ AI-powered email generation</div><div class="auth-point">✓ Save & revisit your email history</div><div class="auth-point">✓ Multiple tones, languages and purposes</div><div class="auth-point">✓ Secure personal workspace</div></div>''',unsafe_allow_html=True)
     with a2:
-        st.markdown('<div class="auth-form">',unsafe_allow_html=True)
-        st.markdown('<div class="eyebrow">Your workspace</div><h2 style="margin:4px 0 6px;color:#172033">Welcome to MailCraft AI</h2><p style="color:#667085;font-size:13px">Sign in or create your free account to continue.</p>',unsafe_allow_html=True)
-        auth_choice=st.radio("Account",["Login","Sign up"],horizontal=True,key="auth_choice")
-        if auth_choice=="Login":
-            email=st.text_input("Email address",key="login_email",placeholder="you@example.com")
-            password=st.text_input("Password",type="password",key="login_password",placeholder="Enter your password")
-            if st.button("Login",type="primary",use_container_width=True):
-                if not email.strip() or not password: st.warning("Please enter email and password.")
-                else:
-                    try: sign_in(email.strip(),password); st.rerun()
-                    except Exception as e: st.error(f"Login failed: {e}")
-            st.caption("Don't have an account? Select **Sign up** above.")
-        else:
-            email2=st.text_input("Email address",key="signup_email",placeholder="you@example.com")
-            password2=st.text_input("Password",type="password",key="signup_password",placeholder="At least 6 characters")
-            password3=st.text_input("Confirm password",type="password",key="signup_confirm",placeholder="Repeat your password")
-            if st.button("Create account",type="primary",use_container_width=True):
-                if not email2.strip() or not password2: st.warning("Please enter email and password.")
-                elif password2!=password3: st.error("Passwords do not match.")
-                elif len(password2)<6: st.error("Password must be at least 6 characters.")
-                else:
-                    try:
-                        msg=sign_up(email2.strip(),password2); st.success(msg)
-                        if current_user(): st.rerun()
-                    except Exception as e: st.error(f"Signup failed: {e}")
-            st.caption("Already have an account? Select **Login** above.")
-        st.markdown('</div>',unsafe_allow_html=True)
+        # IMPORTANT: use a real Streamlit container for the auth panel.
+        # Raw HTML <div> elements cannot wrap Streamlit widgets, which previously
+        # caused the white panel to appear above the Login/Sign up controls.
+        with st.container(border=True):
+            st.markdown('<div class="eyebrow">Your workspace</div><h2 style="margin:4px 0 6px;color:#172033">Welcome to MailCraft AI</h2><p style="color:#667085;font-size:13px">Sign in or create your free account to continue.</p>',unsafe_allow_html=True)
+            auth_choice=st.radio("Account",["Login","Sign up"],horizontal=True,key="auth_choice")
+            if auth_choice=="Login":
+                email=st.text_input("Email address",key="login_email",placeholder="you@example.com")
+                password=st.text_input("Password",type="password",key="login_password",placeholder="Enter your password")
+                if st.button("Login",type="primary",use_container_width=True):
+                    if not email.strip() or not password: st.warning("Please enter email and password.")
+                    else:
+                        try: sign_in(email.strip(),password); st.rerun()
+                        except Exception as e: st.error(f"Login failed: {e}")
+                st.caption("Don't have an account? Select **Sign up** above.")
+            else:
+                email2=st.text_input("Email address",key="signup_email",placeholder="you@example.com")
+                password2=st.text_input("Password",type="password",key="signup_password",placeholder="At least 6 characters")
+                password3=st.text_input("Confirm password",type="password",key="signup_confirm",placeholder="Repeat your password")
+                if st.button("Create account",type="primary",use_container_width=True):
+                    if not email2.strip() or not password2: st.warning("Please enter email and password.")
+                    elif password2!=password3: st.error("Passwords do not match.")
+                    elif len(password2)<6: st.error("Password must be at least 6 characters.")
+                    else:
+                        try:
+                            msg=sign_up(email2.strip(),password2); st.success(msg)
+                            if current_user(): st.rerun()
+                        except Exception as e: st.error(f"Signup failed: {e}")
+                st.caption("Already have an account? Select **Login** above.")
     st.markdown('</div>',unsafe_allow_html=True); st.stop()
 
 # -----------------------------
